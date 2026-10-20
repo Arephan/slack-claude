@@ -1,0 +1,12 @@
+{
+  "name": "slack-claude",
+  "description": "Set up a Slack bot that runs your messages through Claude Code on your own machine, so you can talk to Claude from your phone. Socket Mode, no public URL, owner-only.",
+  "version": "0.1.0",
+  "author": {
+    "name": "Han Kim"
+  },
+  "homepage": "https://github.com/Arephan/slack-claude",
+  "repository": "https://github.com/Arephan/slack-claude",
+  "license": "MIT",
+  "keywords": ["slack", "claude-code", "bot", "socket-mode", "remote"]
+}

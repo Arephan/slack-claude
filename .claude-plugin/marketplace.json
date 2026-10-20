@@ -1,0 +1,15 @@
+{
+  "name": "slack-claude",
+  "description": "Skills for talking to Claude Code through Slack",
+  "owner": {
+    "name": "Han Kim"
+  },
+  "plugins": [
+    {
+      "name": "slack-claude",
+      "source": "./plugins/slack-claude",
+      "description": "Set up a Slack bot that runs your messages through Claude Code on your own machine. Socket Mode, no public URL, owner-only.",
+      "version": "0.1.0"
+    }
+  ]
+}
