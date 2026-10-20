@@ -148,34 +148,47 @@ export function claudeArgs({ prompt, sessionId, config }) {
 
 // ---------- config, log, sessions ----------
 
-export function loadConfig() {
+export function loadConfig({ requireOwner = true } = {}) {
   if (!existsSync(CONFIG_FILE)) {
-    throw new Error(`no config at ${CONFIG_FILE}. Create it with bot_token, app_token and owner (see SKILL.md).`);
+    throw new Error(`no config at ${CONFIG_FILE}. Run \`node bot.mjs init\` or create it with bot_token, app_token and owner (see SKILL.md).`);
   }
   const raw = JSON.parse(readFileSync(CONFIG_FILE, "utf8"));
   const config = { ...DEFAULTS, ...raw };
-  for (const k of ["bot_token", "app_token", "owner"]) {
+  for (const k of ["bot_token", "app_token", ...(requireOwner ? ["owner"] : [])]) {
     if (!config[k]) throw new Error(`config.${k} is missing in ${CONFIG_FILE}`);
   }
   if (!config.bot_token.startsWith("xoxb-")) throw new Error("config.bot_token should start with xoxb-");
   if (!config.app_token.startsWith("xapp-")) throw new Error("config.app_token should start with xapp-");
-  if (!/^[UW][A-Z0-9]+$/.test(config.owner)) throw new Error("config.owner should be a Slack member ID like U0123456789");
+  if (requireOwner && !/^[UW][A-Z0-9]+$/.test(config.owner)) throw new Error("config.owner should be a Slack member ID like U0123456789");
   config.cwd = config.cwd.replace(/^~(?=$|\/)/, homedir());
   return config;
+}
+
+function writeConfig(config) {
+  mkdirSync(HOME, { recursive: true, mode: 0o700 });
+  writeFileSync(CONFIG_FILE, JSON.stringify(config, null, 2) + "\n", { mode: 0o600 });
+}
+
+/** The child claude must not think it is nested inside this Claude Code session. */
+export function childEnv(env = process.env) {
+  const e = { ...env };
+  delete e.CLAUDECODE;
+  delete e.CLAUDE_CODE_ENTRYPOINT;
+  return e;
 }
 
 const stamp = () => new Date().toISOString().replace("T", " ").slice(0, 19);
 function log(line) {
   const row = `${stamp()} ${line}`;
   console.log(row);
-  try { mkdirSync(HOME, { recursive: true }); appendFileSync(LOG_FILE, row + "\n"); } catch {}
+  try { mkdirSync(HOME, { recursive: true, mode: 0o700 }); appendFileSync(LOG_FILE, row + "\n", { mode: 0o600 }); } catch {}
 }
 
 function loadSessions() {
   try { return JSON.parse(readFileSync(SESSIONS_FILE, "utf8")); } catch { return {}; }
 }
 function saveSessions(map) {
-  try { mkdirSync(HOME, { recursive: true }); writeFileSync(SESSIONS_FILE, JSON.stringify(map, null, 1)); } catch (e) { log(`sessions save failed: ${e.message}`); }
+  try { mkdirSync(HOME, { recursive: true, mode: 0o700 }); writeFileSync(SESSIONS_FILE, JSON.stringify(map, null, 1), { mode: 0o600 }); } catch (e) { log(`sessions save failed: ${e.message}`); }
 }
 
 // ---------- Slack API ----------
@@ -208,7 +221,7 @@ function makeApi(config) {
 /** Run claude once; resolves { text, partial, timedOut, sessionId, code, stderr }. Never rejects. */
 export function runClaude(args, { cwd, capMs }) {
   return new Promise((resolve) => {
-    const child = spawn("claude", args, { cwd, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn("claude", args, { cwd, env: childEnv(), stdio: ["ignore", "pipe", "pipe"] });
     const acc = { sessionId: null, final: "", lastText: "", tools: 0 };
     let buf = "", stderr = "", timedOut = false;
     const killer = setTimeout(() => {
@@ -374,23 +387,88 @@ async function check() {
   if (me.ok) {
     const res = await fetch("https://slack.com/api/auth.test", { method: "POST", headers: { Authorization: `Bearer ${config.bot_token}` } });
     const scopes = (res.headers.get("x-oauth-scopes") ?? "").split(",").map((s) => s.trim());
-    const need = ["app_mentions:read", "chat:write", "im:history", "channels:history", "reactions:write", "users:read"];
+    const need = ["app_mentions:read", "channels:history", "groups:history", "im:history", "mpim:history", "im:read", "im:write", "chat:write", "reactions:write", "files:read", "users:read"];
     const missing = need.filter((s) => !scopes.includes(s));
-    if (!missing.length) pass("bot scopes"); else bad(`bot scopes missing: ${missing.join(", ")} (add them under OAuth & Permissions, then reinstall the app)`);
+    if (!missing.length) pass("bot scopes (all 11 from manifest.json)"); else bad(`bot scopes missing: ${missing.join(", ")} (add them under OAuth & Permissions, then reinstall the app)`);
   }
   console.log(fail ? `\n${fail} check(s) failed` : "\nall checks passed");
   return fail ? 1 : 0;
 }
 
+/** Every human in the workspace, across pages. */
+async function listHumans(api) {
+  const out = [];
+  let cursor;
+  do {
+    const r = await api("users.list", { limit: 200, cursor });
+    if (!r.ok) throw new Error(`users.list failed: ${r.error}`);
+    out.push(...r.members.filter((u) => !u.is_bot && !u.deleted && u.id !== "USLACKBOT"));
+    cursor = r.response_metadata?.next_cursor || undefined;
+  } while (cursor);
+  return out;
+}
+const describeUser = (u) => `${u.id}  ${(u.real_name || u.name).padEnd(28)} ${u.is_primary_owner ? "primary owner" : u.is_admin ? "admin" : ""}`;
+
 async function users() {
-  const config = loadConfig();
-  const api = makeApi(config);
-  const r = await api("users.list", { limit: 200 });
-  if (!r.ok) { console.log(`users.list failed: ${r.error}`); return 1; }
-  for (const u of r.members.filter((u) => !u.is_bot && !u.deleted && u.id !== "USLACKBOT")) {
-    console.log(`${u.id}  ${(u.real_name || u.name).padEnd(28)} ${u.is_primary_owner ? "primary owner" : u.is_admin ? "admin" : ""}`);
-  }
+  const config = loadConfig({ requireOwner: false });
+  for (const u of await listHumans(makeApi(config))) console.log(describeUser(u));
   return 0;
+}
+
+/**
+ * Interactive setup in the person's own terminal: the tokens go from their clipboard into
+ * config.json and nowhere else. Picks the owner from the workspace's humans. Ends with check().
+ */
+async function init() {
+  const { createInterface } = await import("node:readline");
+  const rl = createInterface({ input: process.stdin, terminal: false });
+  // Queue every line as it arrives. rl.question() loses a line that lands before it is
+  // asked for (piped or pasted input), and then waits forever on a closed stdin.
+  const lines = [];
+  let waiter = null, closed = false;
+  rl.on("line", (l) => { if (waiter) { const w = waiter; waiter = null; w(l); } else lines.push(l); });
+  rl.on("close", () => { closed = true; if (waiter) { const w = waiter; waiter = null; w(null); } });
+  const question = (prompt) => {
+    process.stdout.write(prompt);
+    if (lines.length) { const l = lines.shift(); process.stdout.write(`${l.length > 12 ? l.slice(0, 8) + "..." : l}\n`); return Promise.resolve(l); }
+    if (closed) return Promise.resolve(null);
+    return new Promise((r) => { waiter = r; });
+  };
+  const askFor = async (label, prefix) => {
+    for (;;) {
+      const v = await question(`${label}: `);
+      if (v === null) throw new Error("input closed before setup finished");
+      if (v.trim().startsWith(prefix)) return v.trim();
+      console.log(`  that should start with ${prefix}`);
+    }
+  };
+  try {
+    console.log(`slack-claude setup. Config will be written to ${CONFIG_FILE} (mode 600).\n`);
+    const existing = existsSync(CONFIG_FILE) ? JSON.parse(readFileSync(CONFIG_FILE, "utf8")) : {};
+    const bot_token = await askFor("Bot User OAuth Token (xoxb-...)", "xoxb-");
+    const app_token = await askFor("App-Level Token (xapp-...)", "xapp-");
+    const api = makeApi({ bot_token, app_token });
+    const me = await api("auth.test");
+    if (!me.ok) { console.log(`bot token rejected: ${me.error}`); return 1; }
+    console.log(`  connected as @${me.user} in ${me.team}`);
+    const humans = await listHumans(api);
+    let owner;
+    if (humans.length === 1) {
+      owner = humans[0].id;
+      console.log(`  one human in this workspace: ${describeUser(humans[0])}`);
+    } else {
+      console.log("  humans in this workspace:");
+      for (const u of humans) console.log(`    ${describeUser(u)}`);
+      do {
+        const v = await question("Your member ID (the bot will answer only you): ");
+        if (v === null) throw new Error("input closed before setup finished");
+        owner = v.trim();
+      } while (!humans.some((u) => u.id === owner));
+    }
+    writeConfig({ ...existing, bot_token, app_token, owner });
+    console.log(`\nwrote ${CONFIG_FILE}\n`);
+  } finally { rl.close(); }
+  return check();
 }
 
 async function ask(prompt) {
@@ -403,7 +481,8 @@ async function ask(prompt) {
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const [cmd, ...rest] = process.argv.slice(2);
   const exit = (p) => p.then((c) => process.exit(c ?? 0), (e) => { console.error(e.message); process.exit(1); });
-  if (!cmd) main().catch((e) => { log(`fatal: ${e.message}`); process.exit(1); });
+  if (!cmd) main().catch((e) => { console.error(`fatal: ${e.message}`); process.exit(1); });
+  else if (cmd === "init") exit(init());
   else if (cmd === "check") exit(check());
   else if (cmd === "users") exit(users());
   else if (cmd === "ask") exit(ask(rest.join(" ")));

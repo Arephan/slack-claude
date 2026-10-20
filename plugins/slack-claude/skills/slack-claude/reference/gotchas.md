@@ -79,4 +79,11 @@ installer copies `bot.mjs` to `~/.slack-claude/`; rerun it after updating.
 
 **Logs.** `~/.slack-claude/bot.log` has one line per event the bot acted on or dropped (with
 the reason), `socket connected`, `socket recycle: ...`, and one line per answer with duration
-and exit code. `service.log` has anything node printed before the log file existed.
+and exit code. Anything printed before the log file existed, such as a fatal config error at
+start, goes to `~/.slack-claude/service.log` on macOS and to `journalctl --user -u slack-claude`
+on Linux.
+
+**Started from inside a Claude Code session?** The bot strips `CLAUDECODE` and
+`CLAUDE_CODE_ENTRYPOINT` from the child environment so the spawned `claude -p` does not think
+it is nested. If you start a foreground test run from inside Claude Code, kill it by PID before
+installing the service, or you get two bots and two answers.

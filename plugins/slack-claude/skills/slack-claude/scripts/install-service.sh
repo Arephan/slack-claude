@@ -68,7 +68,7 @@ EOF
       echo "installed $LABEL (launchd). Logs: $HOME_DIR/bot.log and $HOME_DIR/service.log"
       ;;
     status)
-      launchctl print "$DOMAIN/$LABEL" 2>/dev/null | grep -E "state|pid" | head -3 || echo "not loaded"
+      { launchctl print "$DOMAIN/$LABEL" 2>/dev/null || echo "not loaded"; } | grep -E "state|pid|not loaded" | head -3 || true
       tail -n 5 "$HOME_DIR/bot.log" 2>/dev/null || true
       ;;
     restart) launchctl kickstart -k "$DOMAIN/$LABEL" && echo "restarted" ;;
@@ -109,7 +109,10 @@ EOF
       echo "installed slack-claude.service (systemd --user). Logs: $HOME_DIR/bot.log, journalctl --user -u slack-claude"
       echo "to keep it running after logout: loginctl enable-linger $USER"
       ;;
-    status) systemctl --user status slack-claude.service --no-pager | head -5; tail -n 5 "$HOME_DIR/bot.log" 2>/dev/null || true ;;
+    status)
+      { systemctl --user status slack-claude.service --no-pager 2>&1 || true; } | head -5 || true
+      tail -n 5 "$HOME_DIR/bot.log" 2>/dev/null || true
+      ;;
     restart) systemctl --user restart slack-claude.service && echo "restarted" ;;
     uninstall)
       systemctl --user disable --now slack-claude.service 2>/dev/null || true

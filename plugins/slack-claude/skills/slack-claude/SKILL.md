@@ -13,12 +13,15 @@ Files, relative to this SKILL.md:
 
 | File | What it is |
 |------|------------|
-| `bot.mjs` | the bot (Node 22+, stdlib only). Commands: `check`, `users`, `ask "..."`, `logs` |
+| `bot.mjs` | the bot (Node 22+, stdlib only). Commands: `init`, `check`, `users`, `ask "..."`, `logs` |
 | `manifest.json` | Slack app manifest with the exact scopes and events |
 | `scripts/install-service.sh` | launchd (macOS) / systemd user (Linux) installer |
 | `reference/gotchas.md` | Slack behaviours that break naive bots; read when debugging |
 
-Config lives at `~/.slack-claude/config.json`. Tokens never go in the repo, in chat, or in the service file.
+Config lives at `~/.slack-claude/config.json` (directory 700, file 600). The two Slack tokens
+live in that file and nowhere else: not in the repo, not in the service file, not in any note
+you write. The person may paste them to you in the session so you can write the file; that is
+the fallback, `node bot.mjs init` in their own terminal is the preferred path.
 
 ## Setup
 
@@ -31,31 +34,45 @@ A Slack workspace where they can create apps; a free workspace of their own is t
 **2. The Slack app (the person does this in a browser, you give them the steps).**
 Read `manifest.json` and hand them its content, then:
 1. Open https://api.slack.com/apps?new_app=1 → **From a manifest** → pick the workspace → paste the JSON → **Create**.
-   If they want a different bot name, change `display_information.name` and `bot_user.display_name` before pasting.
+   The bot is called `claude-local` so it cannot collide with Anthropic's own Claude app for Slack
+   if that is installed too. To rename it, change `display_information.name` and `bot_user.display_name` before pasting.
 2. **Basic Information → App-Level Tokens → Generate Token and Scopes**: any name, add scope `connections:write`, Generate. Copy the token starting `xapp-`. It is shown once.
 3. **Install App → Install to Workspace → Allow**. Copy the **Bot User OAuth Token** starting `xoxb-`.
 Ask them to paste both tokens to you. Say they can revoke them from the same pages if they ever leak.
 
-**3. Config.** Write `~/.slack-claude/config.json` (mkdir first, then `chmod 600` the file):
+**3. Config.** Preferred: the person runs `node <this directory>/bot.mjs init` in a terminal of
+their own (give them the full path). It asks for the two tokens, lists the humans in the
+workspace, picks the owner (asks when there is more than one), writes the config, and runs the
+checks. The tokens never pass through you.
+
+Fallback, if they paste the tokens to you: `mkdir -p ~/.slack-claude && chmod 700 ~/.slack-claude`,
+write `~/.slack-claude/config.json` with just the two tokens, `chmod 600` it:
 ```json
-{ "bot_token": "xoxb-...", "app_token": "xapp-...", "owner": "" }
+{ "bot_token": "xoxb-...", "app_token": "xapp-..." }
 ```
-Then `node bot.mjs users` lists the humans in the workspace with IDs. The owner is the person
-you are talking to; if more than one human is listed, ask which is them, never guess. Put that
-`U...` ID in `owner`. Optional keys and their defaults: `model` (claude's default), `cwd` (home
-directory; where claude runs), `cap_minutes` (15), `claude_args`
-(`["--dangerously-skip-permissions"]`), `system_prompt` (extra standing instructions).
+Then `node bot.mjs users` lists the humans with IDs (it works without an owner). The owner is
+the person you are talking to; if more than one human is listed, ask which is them, never
+guess. Add `"owner": "U..."` to the file.
+
+Optional keys and their defaults: `model` (claude's default), `cwd` (home directory; where
+claude runs), `cap_minutes` (15), `claude_args` (`["--dangerously-skip-permissions"]`),
+`system_prompt` (extra standing instructions).
 
 **4. Check.** `node bot.mjs check` must print `all checks passed`. A FAIL line says what to fix.
 `node bot.mjs ask "say ok"` must answer; this runs claude exactly the way the bot will.
 
-**5. Foreground run.** `node bot.mjs` in the foreground. Ask the person to DM the bot "hello"
-from Slack (the bot appears under Apps). They should see 👀, then a reply, then ✅. Watch the
-log for `drop [not-owner:...]`: that means `owner` is wrong. Stop it with Ctrl-C.
+**5. Test run.** Start `node bot.mjs` in the background (your shell tool's background mode, or
+`node bot.mjs & echo $!`) and keep the PID. Ask the person to DM the bot "hello" from Slack (it
+appears under Apps). They should see 👀, then a reply, then ✅; `node bot.mjs logs` shows an
+`answered` line. A `drop [not-owner:...]` line means `owner` is wrong. Then kill that PID and
+confirm `pgrep -f slack-claude/bot.mjs` prints nothing. A test run left alive next to the
+service means every message gets two answers.
 
 **6. Service.** `bash scripts/install-service.sh`. It copies `bot.mjs` to `~/.slack-claude/`
-and starts the service. `bash scripts/install-service.sh status` shows state and the last log
-lines. Ask for one more DM to confirm the service answers.
+and starts the service (launchd on macOS, systemd user unit on Linux). On Linux also run
+`loginctl enable-linger $USER`, or the bot stops when they log out.
+`bash scripts/install-service.sh status` shows state and the last log lines. Ask for one more
+DM to confirm the service answers.
 
 **7. Hand-off.** Tell them: DM the bot for a chat (one Claude session per DM, so follow-ups
 remember), @mention it in a channel it has been invited to (reply comes in a thread, one session

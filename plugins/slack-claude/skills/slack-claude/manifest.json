@@ -1,7 +1,7 @@
 {
   "display_information": {
-    "name": "claude",
-    "description": "Claude Code running on my machine",
+    "name": "claude-local",
+    "description": "Claude Code running on my own machine",
     "background_color": "#1f1f1f"
   },
   "features": {
@@ -11,7 +11,7 @@
       "messages_tab_read_only_enabled": false
     },
     "bot_user": {
-      "display_name": "claude",
+      "display_name": "claude-local",
       "always_online": true
     }
   },

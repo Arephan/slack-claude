@@ -1,6 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { route, cleanText, chunk, foldStream, claudeArgs, SYSTEM_PROMPT } from "../plugins/slack-claude/skills/slack-claude/bot.mjs";
+import { route, cleanText, chunk, foldStream, claudeArgs, childEnv, SYSTEM_PROMPT } from "../plugins/slack-claude/skills/slack-claude/bot.mjs";
+
+test("childEnv drops the nesting markers so claude -p runs when started from inside Claude Code", () => {
+  const e = childEnv({ PATH: "/bin", CLAUDECODE: "1", CLAUDE_CODE_ENTRYPOINT: "cli", HOME: "/h" });
+  assert.deepEqual(e, { PATH: "/bin", HOME: "/h" });
+});
 
 const BOT = "UBOT";
 const OWNER = "UOWNER";
